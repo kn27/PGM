@@ -11,12 +11,8 @@ def generate(model = 'gaussian_mixture', **kwargs):
     x = []
     z = []
     if model == 'gaussian_mixture':
-        #alpha = kwargs.pop('alpha')
         sigma = kwargs['sigma']
         lambda_ = kwargs['lambda_']
-        #if alpha is None:
-        #    alpha = [1/c] * c  
-        #theta = random.dirichlet(alpha)
         beta = [{'mu':random.multivariate_normal(mean=[0,0],cov=[[lambda_,0],[0,lambda_]])} for _ in range(c)]
         for _ in range(n):
             z.append([i for i,item in enumerate(random.multinomial(1,theta)) if item == 1].pop())
@@ -70,11 +66,11 @@ def joint_pdf(x, c ,z, theta, beta, model, **kwargs):
 
 def likelihood(model,x,beta, **kwargs):
     if model == 'gaussian_mixture':
-        return stats.multivariate_normal.pdf(x,beta['mu'])
+        return stats.multivariate_normal.logpdf(x,beta['mu'])
     elif model == 'bernoulli_beta':
-        return stats.binom.pmf(x, kwargs['binomial_n'],  beta['p'])
+        return stats.binom.logpmf(x, kwargs['binomial_n'],  beta['p'])
     elif model == 'poisson_gamma':
-        return stats.poisson.pmf(x, beta['mu'])
+        return stats.poisson.logpmf(x, beta['mu'])
 
 def conjugate_conditional(model,x,**kwargs):
     if model == 'gaussian_mixture':
@@ -104,6 +100,7 @@ def conjugate_conditional(model,x,**kwargs):
 def gibbs(x,model,**kwargs):
     max_iter = kwargs.pop('max_iter', 1000)
     threshold = kwargs.pop('threshold', 10e-4)
+    logging = kwargs.pop('logging', True)
     c = kwargs.pop('c')
     alpha = kwargs.pop('alpha')
     z = kwargs.pop('z')
@@ -113,39 +110,48 @@ def gibbs(x,model,**kwargs):
     assert len(beta) == c
     
     n_iter = 0 
-    sample  = {'theta':[], 'z':[], 'beta':[]}
     plot(x,c,z,beta,model)
     l = 0
     theta = np.array([1/c] * c)
+    sample = {'l':[], 'theta':[], 'z':[], 'beta':[]}
+    
     while True:
         l0 = l
         l = joint_pdf(x, c, z, theta, beta, model, **kwargs)
-        print(f'Iter {n_iter}: Log likelihood = {l}, beta: {beta}, Theta: {theta}')
+        sample['l'].append(l)
+        if logging:
+            #print(f'Iter {n_iter}: Log likelihood = {l}, beta: {beta}, Theta: {theta}')
+            print(f'Iter {n_iter}: Log likelihood = {l}')
         if any([n_iter >= max_iter, abs(l/(l0+0.000001)-1)<threshold]):
+            #print(f'Compete after {n_iter} iterations: Log likelihood = {l}, beta: {beta}, Theta: {theta}')
+            print(f'Compete after {n_iter} iterations: Log likelihood = {l}')
             break
         
         #Sample z
+        z = []
         for i in range(len(x)):
-            proportion = theta * np.array([likelihood(model, x[i], beta[j], **kwargs) for j in range(c)])
-            temp = random.multinomial(1, proportion/np.sum(proportion))
-            z[i] = [i for i,item in enumerate(temp) if item == 1].pop()
+            proportion = np.log(theta) + np.array([likelihood(model, x[i], beta[j], **kwargs) for j in range(c)])
+            proportion = proportion - np.max(proportion)
+            temp = random.multinomial(1, np.exp(proportion)/np.sum(np.exp(proportion)))
+            z.append([i for i,item in enumerate(temp) if item == 1].pop())
+        z = np.array(z)
         sample['z'].append(z)
-        
+
         #Sample theta
         proportion = alpha
         for i in range(len(z)):
             proportion[z[i]] += 1
-        theta = random.dirichlet(proportion)   #
-        #theta = np.array([1/3,1/3, 1/3])
+        theta = random.dirichlet(proportion)
         sample['theta'].append(theta)
 
         #Sample random.beta:
-        for k in range(c):
-            beta[k] = conjugate_conditional(model,x[z==k],**kwargs)
+        beta = [conjugate_conditional(model,x[z==k],**kwargs) for k in range(c)]
         sample['beta'].append(beta)
         n_iter += 1 
+    
     plot(x,c,z,beta,model)
-    return sample
+    return sample 
+    
 
 
 def test_gaussian_mixture():
@@ -190,32 +196,34 @@ def test_poisson_gamma():
                    model = 'poisson_gamma', 
                    c = c, 
                    alpha = alpha, 
-                   beta = [{'mu':random.gamma(gamma_k, gamma_theta)} for _ in range(c)], 
+                   beta = np.array([{'mu':random.gamma(gamma_k, gamma_theta)} for _ in range(c)]), 
                    z = np.array([random.randint(0,c-1) for _ in range(len(x))]), 
                    gamma_k = gamma_k,
                    gamma_theta = gamma_theta)
 
-def senators():
-    votes = '/home/keane/temp/senate/votes.csv'
-    with open(votes) as file:
+if __name__ == "__main__":
+    vote_file = '/home/keane/temp/senate/votes.csv'
+    senator_file= '/home/keane/temp/senate/senators.txt'
+
+    senators = {'party':[], 'state':[]}
+    with open(senator_file) as file:
+        for line in file:
+            party, state = line.split(' ')[-1][1:-2].split('-')
+            senators['party'].append(party)
+            senators['state'].append(state)
+            
+            
+    with open(vote_file) as file:
         votes = [line.split(',') for line in file]
         votes = np.array([round(vote.count('1')/(vote.count('1') + vote.count('0')) * 1000) for vote in votes])
-    c = 4
+    np.random.seed(13)
+    c = 2
     sample = gibbs(x = votes, 
-                   model = 'bernoulli_beta', 
-                   c = c, 
-                   alpha = np.array([1/c]*c), 
-                   beta = [{'p':random.beta(1,1)} for _ in range(c)], 
-                   z = np.array([random.randint(0,c) for _ in range(len(votes))]), 
-                   beta_alpha = 1,
-                   beta_beta = 1,
-                   binomial_n = 1000)
-    print()
-
-if __name__ == "__main__":
-    np.random.seed(0)
-    #test_bernoulli_beta()
-    senators()
-
-#TODO: Stability of calculation -> Why is it more preferable to use log?
-#TODO: 
+                model = 'bernoulli_beta', 
+                c = c, 
+                alpha = np.array([1/c]*c), 
+                beta = np.array([{'p':random.beta(1,1)} for _ in range(c)]), 
+                z = np.array([random.randint(0,c) for _ in range(len(votes))]), 
+                beta_alpha = 1,
+                beta_beta = 1,
+                binomial_n = 1000)
