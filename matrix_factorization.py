@@ -42,5 +42,32 @@ def read():
             json.dump(movie_map, file)
     return ratings
 
+def mixed_membership():
+    pass
+
+def beta_gamma_factorization():
+    pass
+
+def cavi():
+    pass
+
+def sgd():
+    pass
+
+def natural_gradient():
+    pass
+
+def using_edward():
+    pass
+
+def using_pystan():
+    pass
+
+def vae():
+    pass
+
+def advi():
+    pass
+
 if __name__ == "__main__":
     rating = read()
